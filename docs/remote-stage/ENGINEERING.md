@@ -30,8 +30,9 @@ the head and the drafter on the worker would have saved that return trip and mov
 ### The protocol
 
 One TCP connection per main process. Every message is a 40-byte header (`magic` "STRM", `type`, three int64 fields
-`a b c`, payload `bytes`) and a payload. Protocol version 5 (4 before images: the Positions message and the hello's
-`vision`; 3 before the hello carried the tail-skip rank).
+`a b c`, payload `bytes`) and a payload. Protocol version 6 (3 before the hello carried the tail-skip rank, 4 before
+images, which added the Positions message and the hello's `vision`, 5 before the conversation checkpoints, which
+added `CkptSave` / `CkptRestore`, a keep list on `Reset` and the hello's `ckpt_max`: [CHECKPOINTS.md](CHECKPOINTS.md)).
 
 | message | header fields | payload | reply |
 |---|---|---|---|
@@ -39,8 +40,10 @@ One TCP connection per main process. Every message is a 40-byte header (`magic` 
 | Run (a verify window) | a = T, b = first position | int32 tokens[T], fp32 rows[T x 12,804] | RunOk: a = the worker's time (us), rows[T x 12,804] |
 | Commit | a = accepted count | none | none (an error comes back on the next reply) |
 | Prefill (a prompt chunk) | a = T, b = first position, c = flags (bit 0: the prompt is one chunk) and `skip` << 8 | int64 tokens[T], fp32 rows[T x 10,240] | PrefillOk: a = the worker's time (us), rows[(T - skip) x 10,240] |
-| Reset (a fresh prompt) | | none | ResetOk |
-| Positions (`--vision`: the next request's) | a = cells; b = 1: plain positions (no table) | int32 (t, h, w)[cells] | none (an error comes back on the next reply, a Reset's included) |
+| Reset (a fresh prompt) | | int64 keep[] (empty: none) | ResetOk |
+| Positions (`--vision`: the next request's) | a = cells; b = 1: plain positions (no table) | int32 (t, h, w)[cells] | none (an error comes back on the next reply, a Reset's and a CkptRestore's included) |
+| CkptSave | a = id, b = position | int64 keep[] | CkptSaveOk: a = 1 stored, 0 not |
+| CkptRestore | a = id, b = position | int64 keep[] | CkptRestoreOk |
 | Error | | the message | |
 
 **The hello** carries what both sides must agree on, and each side checks the other's: the protocol, `n_embd`, `hc`,
@@ -55,10 +58,11 @@ every protocol, so an older peer is refused for its protocol number. A peer that
 the hello the worker waits for messages without a time limit (the next prompt may be hours away), while sends and the
 main process's receives time out after `STRATA_REMOTE_TIMEOUT_S` (300 s). Sockets: `TCP_NODELAY`, 8 MiB buffers,
 keepalive after 30 s idle, 3 probes 10 s apart. The engine's stall watchdog (issue #29, `STRATA_WATCHDOG_S`) watches
-each message a worker serves (a window, a prompt chunk, a commit, a reset, a position table) and is idle between
-them, so a worker stuck on its GPU ends with its stall report instead of holding every later main process at the
-hello. A relay's waits for its next worker (a connect, its taking a prompt chunk, a window's or a reset's reply) get an allowance of
-`STRATA_REMOTE_TIMEOUT_S` + 150 s instead: the link's timeouts end them, and a stuck next worker ends alone, with its
+each message a worker serves (a window, a prompt chunk, a commit, a reset, a position table, a checkpoint save or
+restore) and is idle between them, so a worker stuck on its GPU ends with its stall report instead of holding every
+later main process at the hello. A relay's waits for its next worker (a connect, its taking a prompt chunk, a window's,
+a reset's or a checkpoint's reply) get an allowance of `STRATA_REMOTE_TIMEOUT_S` + 150 s instead: the link's timeouts
+end them, and a stuck next worker ends alone, with its
 own report. `STRATA_REMOTE_STALL_AT=N` (a test hook) blocks the worker's Nth window. Checked on CUDA (the 3080 + 2080 Ti
 pair, `STRATA_REMOTE_STALL_AT=60 STRATA_WATCHDOG_S=20` on the worker): the worker wrote its stall report 20 s into the
 blocked window and exited; the request in flight failed 25-26 s after it was sent (`remote stage: the peer closed the
@@ -598,7 +602,9 @@ Then images ([Images](#images)). Checked on PC A and PC B (RVN IQ3_S, 10 GbE, K=
   done. So far the start of every benchmark answer (the 100-160 characters the benchmark keeps) was read: coherent and
   on topic in every configuration.
 - **Reconnecting** without restarting the main engine (a broken link now ends the main engine at the next prompt's
-  reset, and the server starts it again; read from the code, not tested); conversation checkpoints across stages.
+  reset, and the server starts it again; read from the code, not tested); conversation checkpoints across stages
+  ([CHECKPOINTS.md](CHECKPOINTS.md): built, opt-in with `--prompt-cache N`, checked on two GPUs; a relay is not
+  run).
 - **A ring topology** for three or more PCs.
 - **A bf16 hand-off** (half the traffic); its effect on the answers would need measuring.
 - **Windows as the main PC** (only workers were run on Windows), and the clock behaviour of an in-process split on

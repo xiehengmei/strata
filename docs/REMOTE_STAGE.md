@@ -267,9 +267,9 @@ main process without it.
 
 Fixed: a peer that connects but sends no hello within 10 s is dropped; TCP keepalive notices a peer that vanished
 without closing (power, cable) in about a minute. A worker stuck in a message it serves (a window, a prompt chunk, a
-commit, a reset, a position table) for `STRATA_WATCHDOG_S` (60 s) ends with a stall report, as a main process does;
-its agent does not start it again. A relay's waits for its next worker do not count: they end by the link's timeouts,
-and the next worker has its own watchdog. On Windows a worker's port is bound exclusively (`SO_EXCLUSIVEADDRUSE`), so
+commit, a reset, a position table, a checkpoint save or restore) for `STRATA_WATCHDOG_S` (60 s) ends with a stall
+report, as a main process does; its agent does not start it again. A relay's waits for its next worker do not count:
+they end by the link's timeouts, and the next worker has its own watchdog. On Windows a worker's port is bound exclusively (`SO_EXCLUSIVEADDRUSE`), so
 a second worker on the same port fails as it does on Linux.
 
 **Timing lines** (`STRATA_REMOTE_TIMING=1`), what the tuner reads:
@@ -432,9 +432,13 @@ python3 tools/stage_tune.py apply cluster.json OUTDIR    # start the workers as 
 
 - **Refused at start** with a remote stage: `--batch`, `--pipeline-windows`, `--peer-device`,
   `--control-vector` (and the speed projection, which is one), `--expert-cache-remote`.
-- **Turned off without an error** (the main process's log says so in one line): the prompt cache, conversation
+- **Turned off without an error** (the main process's log says so): the prompt cache, conversation
   parking (`--conversation-cache-mib`) and mid-prompt checkpoints (each PC holds only its layers' state, so every
-  prompt is read from token 0), and `--kv-grow`.
+  prompt is read from token 0), and `--kv-grow`. With `--prompt-cache N` given on the main process, conversation
+  checkpoints at the prompt's turn boundaries come back: the worker keeps its layers' part of each
+  ([remote-stage/CHECKPOINTS.md](remote-stage/CHECKPOINTS.md): later turns of a 16K-token chat get their first token
+  in 0.32-0.44 s instead of 14.2-15.1 s on an RTX 3080 + RTX 2080 Ti, engine 0.1.43). Mid-prompt checkpoints and
+  parking stay off, and session files are refused.
 - **Not checked** with a remote stage: `STRATA_PREFILL_HELP`, `--adapt-async 1`, `--resident-experts`,
   `--mmap-experts` / `--resident-budget-gib` (the mapped expert source gets no layer range; it maps the whole pack),
   `STRATA_PF_FUSED=1`.
