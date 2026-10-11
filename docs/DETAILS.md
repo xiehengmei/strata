@@ -1222,10 +1222,26 @@ there (`finish_reason` "stop"; `stop_reason` "stop_sequence" with `stop_sequence
 is not reproducible run to run - for seed-reproducible output add `--adapt-every 100000` (static residency) to the
 engine arguments. The run config's optional `sampling` block sets the defaults for requests that leave the fields out
 (`"sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 20}`); a request's own fields always win, and with no
-block at all a request without sampling keys decodes greedy. The penalties (`presence_penalty`, `frequency_penalty`,
+block at all a request without sampling keys decodes greedy. Writing that block is opt-in (#1129): setup adds the
+card's thinking set only when `START-HERE.bat --thinking` names it - `temperature=1.0, top_p=0.95, top_k=20,
+min_p=0.0, presence_penalty=0.0, repetition_penalty=1.0` - or its set for direct answers when `--instruct` names it
+(Linux: `./setup.sh --thinking` / `--instruct`): `temperature=0.7, top_p=0.80, top_k=20, min_p=0.0,
+presence_penalty=1.5, repetition_penalty=1.0`. A run that names no flag - new install or setup again later -
+writes no block and the greedy path stays exactly as it was; numbers written by hand stay as they are, and a start
+that picks a preset keeps the file it replaced as `strata-<model>.json.bak`, the way a setup run does. The Intel
+path keeps that choice: `sycl/setup_intel.py` rewrites the config for its container paths, and the block setup
+wrote for this run wins over the earlier config's; an Intel start saves what it names (`--thinking` / `--instruct`
+among them) before its own run script starts the server. A `sampling` that is not a set of numbers at all - a
+name, a list, a bare value - stops the start with a message naming it instead of a traceback; a setup run that
+names a flag replaces such a block and says what it replaced, and a run that names no flag says it left it there.
+A start names what it uses: setup's `Settings (...)` line and the
+server's `sampling defaults from the config: ...` line list the numbers and say which preset the block holds, or that
+requests decode greedy. The penalties (`presence_penalty`, `frequency_penalty`,
 `repetition_penalty`, with `penalty_last_n` capping how many recent tokens they count over, default 64 when any
 penalty is set; llama.cpp's names `repeat_penalty` and `repeat_last_n` work too, in the config's `sampling` block and in a request, #1819) ride the same path; they count the tokens the request has consumed, so a repetition penalty
-suppresses what the model itself just said, not the prompt alone. Since engine 0.1.19 they apply to every token
+suppresses what the model itself just said, not the prompt alone; in batch windows (`"parallel": N`) no penalty is
+applied at all yet (docs/BATCHING.md, "Limits (for now)") - an `--instruct` block's `presence_penalty=1.5` does
+nothing inside a batch. Since engine 0.1.19 they apply to every token
 the speculative decoding checks at once, exactly as if it decoded one token at a time (before, only the first of
 each batch got them). That makes requests with penalties 1-11% slower than in 0.1.18: the draft layer guesses
 without penalties, so more of its guesses are now rejected. Requests without penalties are unchanged. `top_k` keeps at most 64 candidates: `0` ("off") or anything above 64 uses all 64.
