@@ -1523,6 +1523,11 @@ class SamplingKeys(unittest.TestCase):
         bad = self.keys(strata_tune={"pcie_frac": 3, "spec_min_p": True, "pool_workers": 2})
         self.assertFalse([x for x in bad if x.split("=")[0] in ("pcie_frac", "spec_min_p", "pool_workers")])
 
+    def test_dflash_block_tune_key(self):
+        self.assertIn("dflash_block=4", self.keys(strata_tune={"dflash_block": 4}))
+        for value in (0, 8, -1, True, 4.0, "4", float("nan"), float("inf")):
+            self.assertFalse([k for k in self.keys(strata_tune={"dflash_block": value}) if k.startswith("dflash_block=")])
+
     def test_tune_aux_cpus(self):
         for val, want in ((True, "aux_cpus=1"), (1, "aux_cpus=1"), (False, "aux_cpus=0"), (0, "aux_cpus=0"),
                           (1.0, "aux_cpus=1"), (0.0, "aux_cpus=0")):
