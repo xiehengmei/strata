@@ -22,6 +22,7 @@
 #include "strata/kernels/fused_gr.hpp"
 #include "strata/kernels/route_prior.hpp"
 #include "strata/kernels/cvec.hpp"
+#include "strata/kernels/lora.hpp"
 #include "strata/kernels/gr.hpp"
 #include "strata/kernels/kv_q4.hpp"
 #include "strata/kernels/kv_q8.hpp"
@@ -1180,6 +1181,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 if (!g_qfuse() || batch_rec_) native_quantize_q8_1(y_ + (size_t) tb * ZV, xq_, (int) ZV, n, cs);
                 il_ready = false;
                 mm(wout, bo_ + tb * N, (int) ZV, (int) N);
+                strata::kernels::lora_apply(l, y_ + (size_t) tb * ZV, ZV, n, bo_ + tb * N, N, cs);   // --lora
             } else {
                 // ======================= QSA =======================
                 const int64_t qi = qsa_idx[(size_t) l];
@@ -1407,6 +1409,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 native_quantize_q8_1(attn32_ + tb * NH * HD, xq_, (int) (NH * HD), n, cs);
                 il_ready = false;
                 mm(wo, bo_ + tb * N, (int) (NH * HD), (int) N);
+                strata::kernels::lora_apply(l, attn32_ + tb * NH * HD, NH * HD, n, bo_ + tb * N, N, cs);   // --lora
             }
         } catch (const std::exception& e) {
             err = "verify layer " + std::to_string(l) + ": " + e.what();
