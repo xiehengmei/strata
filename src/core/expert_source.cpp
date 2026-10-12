@@ -514,8 +514,14 @@ bool file_tier_unbuffered(const std::vector<std::string>& paths, uint64_t arena_
     // #1194: the experts read from the files are a skewed set: a cache holding a twentieth of them (at least 1.5 GiB)
     // serves most of the repeats, and beat the unbuffered reads at every room measured (it reads 2 to 7 times less from
     // the drive).  `avail` already has what this process and the cgroup hold taken off, so 1 GiB is left for the rest.
+#if defined(STRATA_USE_HIP) || defined(STRATA_HIP_GFX906)
+    // ROCm queues are suspended while the kernel reclaims around the process's HMM-tracked arena (#1691): the cached
+    // reads churn the page cache and reclaim unmaps the arena, so keep the old room >= read_bytes rule here.
+    const bool keepable = strata::platform::file_cache_keeps(avail, arena_bytes, read_bytes);
+#else
     const bool keepable = strata::platform::file_cache_keeps(avail, arena_bytes, read_bytes, 1ull << 30, 0.05,
                                                              3ull << 29);
+#endif
     char msg[256];
     std::snprintf(msg, sizeof msg, "%.1f GiB available, %.1f GiB of it still to be taken by the RAM copy, %.1f GiB "
                   "of experts read from the files: the file cache %s keep the ones that come back",
