@@ -158,7 +158,7 @@ void run_checks() {
         // gate/up: nt = 1..8, every width bit-identical to that token's nt = 1 row (#152), all rel <= 1e-5 vs ggml
         std::vector<std::vector<float>> ff1(kMaxT), out1(kMaxT);
         for (int nt = 1; nt <= kMaxT; ++nt) {
-            cpu::iq128_gu_rows(c.gu, fx.blob.data(), fx.f.gu_row, fx.f.up_off, kH, actp, nt, ffp, 0, kFF);
+            cpu::iq128_gu_rows(c.gu, fx.blob.data(), fx.f.gu_row, fx.f.up_off, kH, actp, nt, ffp, 0, kFF, 0.0f);
             for (int t = 0; t < nt; ++t) {
                 char what[96];
                 std::snprintf(what, sizeof what, "%s gu nt=%d vs ggml", c.name, nt);
@@ -244,7 +244,7 @@ void run_bench(int mb, const std::vector<int>& nts) {
             const double ms_ggml = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
             t0 = Clock::now();
             for (int e = 0; e < nexp; ++e) {
-                cpu::iq128_gu_rows(c.gu, blob.data() + (size_t) e * per, fx.f.gu_row, fx.f.up_off, kH, actp, nt, ffp, 0, kFF);
+                cpu::iq128_gu_rows(c.gu, blob.data() + (size_t) e * per, fx.f.gu_row, fx.f.up_off, kH, actp, nt, ffp, 0, kFF, 0.0f);
                 cpu::iq128_down_rows(c.dn, blob.data() + (size_t) e * per + fx.f.down_off, fx.f.d_row, kFF, hqp, nt, outp, 0, kH);
             }
             const double ms_iq = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();

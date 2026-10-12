@@ -21,9 +21,10 @@ namespace strata::kernels::cpu {
 /// gate/up formats with an AVX1 kernel: IQ3_XXS (18), IQ3_S (21), IQ2_S (22), IQ4_XS (23).
 bool iq128_supported(int ggml_type) noexcept;
 /// ff[t][r] = silu(gate_r . a[t]) * (up_r . a[t]), rows [r0, r1); gate rows at blob, up rows at blob + up_off.
+/// `limit` caps the SILU'S OUTPUT, above only, and the up on both sides; `<= 1e-6` is no clamp (see native_expert.cpp).
 /// Activations are ggml's quantized form for the format (Q8_K for every format here), as in native_gu_rows.
 void iq128_gu_rows(int ggml_type, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
-                   int nt, float* const* ff, int r0, int r1);
+                   int nt, float* const* ff, int r0, int r1, float limit);
 
 /// down formats with an AVX1 kernel: IQ4_NL (20), Q2_0 (42, the fork's type).  Activations: Q8_0 for both.
 bool iq128_down_supported(int ggml_type) noexcept;

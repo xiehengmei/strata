@@ -94,7 +94,10 @@ struct Rig {
 
     explicit Rig(const char* tag) {
         std::string err;
-        require(strata::kernels::cpu::expert_layout_load(dir.path.string(), kLayers, kExperts, err), err);
+        // the first family's geometry and no SwiGLU clamp: what `expert_layout_test.cpp`'s own helper passes
+        require(strata::kernels::cpu::expert_layout_load(dir.path.string(), kLayers, kExperts,
+                                                         strata::kernels::cpu::H, strata::kernels::cpu::FF, 0.0f, err),
+                err);
         blob = (size_t) strata::kernels::cpu::BLOB;
         truth.resize((size_t) kLayers * kExperts);
         {
