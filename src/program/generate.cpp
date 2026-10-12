@@ -7864,7 +7864,6 @@ int main(int argc, char** argv) {
                 if (strata::core::conversation_memory_admit(mem ? std::optional<uint64_t>(mem->available) : std::nullopt,
                                                             need, floor))
                     return true;
-                if (conv_disk.drop_queued()) continue;   // a request waits for no write but the one under way
                 if (conv_disk.pending()) { conv_disk.wait_idle(); continue; }
                 if (conversations.size() == 0 || evicted >= conversations.slots() || !conversations.evict_oldest())
                     return false;
