@@ -68,6 +68,7 @@ HF_REVISIONS = {
     "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF": "b22d729eae29b5796f76fb70f91aef549b9fc52c",   # 2026-09-24
     "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF": "5348543e0147355ac9cbcb031184a3546350988e",  # 2026-09-29
     "unsloth/Qwen3.8-Flash-Next-GGUF": "38bb39ee97821de2c9009abb7e93950eec396e66",                   # 2026-09-30
+    "agentionai/Signal-3.8-Flash-Next-GGUF": "eba565bea194b899480ebd8a8ab63d537917004b",             # 2026-09-19
 }
 
 
@@ -230,6 +231,16 @@ MODELS = {
                   "download_gb": 93.7, "ram_gb": 48, "arena_gb": 59.5, "families": ("unsloth",), "budget": True,
                   "shards": 3, "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00003.gguf", "engine": (0, 1, 38),
                   "vision": True},
+    # agentionai's Signal (docs/SIGNAL_AP_Q4_K_XL.md): one GGUF per size, Q4_K (AP-Q4_K_XL) or IQ3_S (AP-IQ4_XS)
+    # gate/up experts with IQ4_NL downs, a RAM budget of them like Unsloth's.  AP-Q4_K_XL was run (RTX 4090, images
+    # too); AP-IQ4_XS's header differs from it only in the gate/up type, and it has not been run.  AP-Q4_K_XL: NVIDIA
+    # only, as UD-Q4_K_XL (no HIP prompt kernels for Q4_K experts); AP-IQ4_XS's experts are UD-IQ4_XS's types
+    "AP-Q4_K_XL": {"about": "4-bit (Agention Precision), Q4_K experts; on a PC with less than ~90 GB of RAM part of "
+                            "its experts are read from the SSD", "download_gb": 101.1, "ram_gb": 48, "arena_gb": 67.9,
+                   "families": ("signal",), "budget": True, "nvidia_only": True, "vision": True},
+    "AP-IQ4_XS": {"about": "~4-bit (Agention Precision), IQ3_S experts, 10 GB smaller; on a PC with less than ~80 GB "
+                           "of RAM part of its experts are read from the SSD", "download_gb": 90.4, "ram_gb": 48,
+                  "arena_gb": 57.3, "families": ("signal",), "budget": True, "vision": True},
 }
 # The experimental Unsloth file's four shards at the pinned revision: name -> (bytes, sha256), checked after the
 # download (setup trusts no other model file by name and size alone either: check_shards reads their directories).
@@ -251,6 +262,13 @@ UNSLOTH_IQ4_XS_SHARDS = {
         (49835229856, "577a38a2392b40ca2193cea502e1d92f60b8cd370675d308e0ec21885d9daaa7"),
     "Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00003.gguf":
         (43836407744, "d4634e6d84f0ebb0940be15c90d3790bf6464e3dea3a1cddc567dc0e83ad8833"),
+}
+# Signal's two files at the pinned revision (sizes and SHA-256: the Hub's LFS pointers)
+SIGNAL_FILES = {
+    "Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf":
+        (101142769984, "427a7a10dd5a98d77c71be62a89d14e7408fc61a84c6efe889393852282cd3c6"),
+    "Signal-3.8-Flash-Next-AP-IQ4_XS.gguf":
+        (90447294816, "7fadb6b29035377204aed0d0085d3f58cc65fc7b4c3aa79f8f3f84fdfc304529"),
 }
 UNSLOTH_ENGINE = (0, 1, 32)     # the first engine setup configures for UD-Q4_K_XL (0.1.31 ran it by hand)
 UNSLOTH_RAM_LEFT_GB = 24        # RAM beside the budget: the OS, the engine, and the file cache the rest is read through
@@ -297,6 +315,18 @@ FAMILIES = {
                 "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf", "name": "qwen3.8-flash-next-unsloth",
                 "vision": False, "pack_args": ["--compat-bf16"],
                 "sha256": {**UNSLOTH_SHARDS, **UNSLOTH_IQ4_XS_SHARDS}},
+    # agentionai's fine-tune: one file per size; its Q6_K dense weights need --compat-bf16, and its Q6_K token
+    # embedding is read from a BF16 copy setup writes beside the pack ("embd_bf16", tools/embd_bf16_pack.py --gguf).
+    # Its own image encoder is called mmproj-F16.gguf in the repository; setup keeps it under a name of its own
+    "signal": {"title": "Signal 3.8 Flash Next", "by": "agentionai's fine-tune of Qwen3.8-Flash-Next",
+               "about": "more direct thinking (26% fewer reasoning tokens on MATH-500, by its authors' numbers); "
+                        "~4-bit only, a 90-101 GB download",
+               "hf": hf("agentionai/Signal-3.8-Flash-Next-GGUF") + "{q}/",
+               "file": "Signal-3.8-Flash-Next-{q}.gguf", "shards": 1, "tag": "signal-",
+               "mmproj_hf": hf("agentionai/Signal-3.8-Flash-Next-GGUF"), "mmproj": "mmproj-F16.gguf",
+               "mmproj_as": "mmproj-Signal-3.8-Flash-Next-F16.gguf", "name": "signal-3.8-flash-next",
+               "pack_args": ["--compat-bf16"], "embd_bf16": True, "sha256": SIGNAL_FILES,
+               "license": "Qwen Community License 1.0: https://huggingface.co/agentionai/Signal-3.8-Flash-Next-GGUF"},
 }
 MMPROJ = "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
 # EXPERIMENTAL, off by default (setup asks): a control vector shipped with the repository, see its README
@@ -1199,7 +1229,8 @@ def budget_model(cfg: dict) -> str:
     a = cfg.get("args", [])
     native = Path(a[a.index("--native") + 1]).name.upper() if "--native" in a and a.index("--native") + 1 < len(a) \
         else ""
-    return next((m for m, d in MODELS.items() if d.get("budget") and f"-{m}-" in native), "UD-Q4_K_XL")
+    return next((m for m, d in MODELS.items()      # (a shard: ...-UD-IQ4_XS-00001-of-..., Signal's one file: ...-AP-IQ4_XS.gguf)
+                 if d.get("budget") and (f"-{m}-" in native or native.endswith(f"-{m}.GGUF"))), "UD-Q4_K_XL")
 
 
 def unsloth_split_need_gb(model="UD-Q4_K_XL") -> float:
@@ -1574,10 +1605,11 @@ def gguf_dir_shards(folder: Path, fam: dict, model: str) -> list[Path]:
 
 
 # #444: the quantization in a GGUF's name (Unsloth's UD-IQ3_XXS, a K-quant's Q2_K_XL, a GSQ-RCO IQ3_S, ...)
-GGUF_QUANT = re.compile(r"(?<![A-Za-z0-9])((?:UD-)?(?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32))"
+GGUF_QUANT = re.compile(r"(?<![A-Za-z0-9])((?:UD-|AP-)?(?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32))"
                         r"(?=-\d{5}-of-\d{5}\.gguf$|\.gguf$)", re.I)
 SUPPORTED_GGUFS = ("Strata runs ISTA-DASLab's GSQ-RCO files (Qwen3.8-Flash-Next Q2_0, IQ2_XS, IQ3_XXS, IQ3_S; Swift "
-                   "1.5's; the Coder's IQ1_M) and Unsloth's UD-Q4_K_XL and UD-IQ4_XS only: other GGUFs (Unsloth's "
+                   "1.5's; the Coder's IQ1_M), agentionai's Signal AP-Q4_K_XL and AP-IQ4_XS, and Unsloth's UD-Q4_K_XL "
+                   "and UD-IQ4_XS only: other GGUFs (Unsloth's "
                    "UD-IQ3_XXS or "
                    "UD-Q2_K_XL, K-quants) cannot be used")
 
@@ -5501,9 +5533,9 @@ def main() -> int:
         if s.name in fam.get("sha256", {}):
             verify_sha256(s, *fam["sha256"][s.name])
     ok("model files present")
-    mmproj = Path(a.models_dir) / fam["mmproj"]
+    mmproj = Path(a.models_dir) / fam.get("mmproj_as", fam["mmproj"])
     if not mmproj.exists():
-        mmproj = find_in(roots, f"models/{fam['mmproj']}") or mmproj
+        mmproj = find_in(roots, f"models/{mmproj.name}") or mmproj
     if vision != "none":
         if not mmproj.exists() and a.gguf_dir and (Path(a.gguf_dir) / fam["mmproj"]).exists():
             mmproj = Path(a.gguf_dir) / fam["mmproj"]
@@ -5533,6 +5565,13 @@ def main() -> int:
         # (UD-Q4_K_XL: --compat-bf16 - its Q8_0 hyper-connection projections become BF16, the form the engine reads)
         run([sys.executable, str(ROOT / "tools" / "iq_pack.py"), "--gguf", str(shards[0]), "--out", str(pack),
              *fam.get("pack_args", [])], env=env)
+    embd = pack / "token-embd-bf16.gguf" if fam.get("embd_bf16") else None
+    if embd and not done(embd):
+        # Signal: the stock engine has no GPU dequantizer for its Q6_K token embedding; it reads a BF16 copy instead
+        say("  Writing the token embedding as BF16 (one time, ~1.3 GB) ...")
+        run([sys.executable, str(ROOT / "tools" / "embd_bf16_pack.py"), "--gguf", str(shards[0]), "--out", str(embd)],
+            env=env)
+        mark(embd)
     if low_ram and not (pack / "experts.bin").exists():
         say(f"  Writing the experts into one file for the low-RAM mode (one time, {MODELS[model]['arena_gb']:.0f} GB) ...")
         run([sys.executable, str(ROOT / "tools" / "iq_pack.py"), "--gguf", str(shards[0]), "--out", str(pack),
@@ -5569,6 +5608,7 @@ def main() -> int:
         fail("the model has no per_layer_token_embd tensor (is this a Qwen3.8-Flash-Next GGUF?)")
     # (a 4-shard file: the engine finds the PLE table's shard itself from shard 1, the measured setup)
     args = ["--pack", str(pack), "--native", str(shards[0]), *(["--ple-gguf", str(ple)] if len(shards) <= 2 else []),
+            *(["--embd-gguf", str(embd)] if embd else []),
             "--expert-profile", str(ROOT / "data" / fam.get("profile", "expert-profile.bin")), "--expert-cache", "auto",
             "--prefill", "auto", "--spec", "4", "--spec-min-p", "0.5", "--mtp", str(rt),
             "--max-context", str(ctx)]

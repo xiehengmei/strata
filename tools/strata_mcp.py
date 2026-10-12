@@ -66,6 +66,12 @@ FALLBACK_MODELS = {
                            "less than ~80 GB of RAM part of its experts are read from the SSD",
                   "download_gb": 93.7, "ram_gb": 48, "arena_gb": 59.5, "families": ("unsloth",), "budget": True,
                   "vision": True},
+    "AP-Q4_K_XL": {"about": "4-bit (Agention Precision), Q4_K experts; on a PC with less than ~90 GB of RAM part of "
+                            "its experts are read from the SSD", "download_gb": 101.1, "ram_gb": 48, "arena_gb": 67.9,
+                   "families": ("signal",), "budget": True, "vision": True},
+    "AP-IQ4_XS": {"about": "~4-bit (Agention Precision), IQ3_S experts, 10 GB smaller; on a PC with less than ~80 GB "
+                           "of RAM part of its experts are read from the SSD", "download_gb": 90.4, "ram_gb": 48,
+                  "arena_gb": 57.3, "families": ("signal",), "budget": True, "vision": True},
 }
 FALLBACK_FAMILIES = {
     "qwen": {"title": "Qwen3.8-Flash-Next", "about": "the original model", "tag": ""},
@@ -77,6 +83,9 @@ FALLBACK_FAMILIES = {
                                                                   "of RAM part of its experts are read from the SSD "
                                                                   "(UD-Q4_K_XL, 111 GB: experimental)",
                 "tag": "unsloth-", "vision": False},
+    "signal": {"title": "Signal 3.8 Flash Next", "about": "more direct thinking (26% fewer reasoning tokens on MATH-500, "
+                                                       "by its authors' numbers); ~4-bit only, a 90-101 GB download",
+               "tag": "signal-"},
 }
 FALLBACK_CONTEXTS = [8192, 32768, 65536, 131072, 204800, 262144, 393216, 524288]
 BENCH_PROMPT = ("Write a short story (about 300 words) about a lighthouse keeper who finds a message in a bottle. "

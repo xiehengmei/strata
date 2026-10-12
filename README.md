@@ -133,6 +133,9 @@ sizes are faster. Larger sizes are a bit smarter.
   while it answers, so it is slower there (an NVMe SSD helps).
 - **[Unsloth UD-Q4_K_XL](docs/MODELS.md#unsloth-ud-q4_k_xl-experimental)** (experimental): the closest to the full
   model. But Strata reads most of it from the SSD while it answers, so it writes only 7-8.5 tokens/s on a 64 GB PC.
+- **[Signal 3.8 Flash Next](docs/MODELS.md#signal-38-flash-next):** agentionai's fine-tune that thinks more directly
+  (26% fewer reasoning tokens on MATH-500, measured by its authors). ~4-bit only: AP-Q4_K_XL, a 101 GB download, or
+  AP-IQ4_XS, 90 GB. With less than ~90 GB (~80 GB) of RAM, Strata reads part of it from the SSD while it answers.
 - **[OrcaRouter's Uncensored IQ3_XXS](docs/MODELS.md#orcarouter-uncensored-iq3_xxs):** you set it up by hand. It is
   not in the installer's menu.
 
@@ -202,8 +205,8 @@ The longer explanation: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). Every part
 ## Credits and license
 
 The model is [Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) by the Qwen team. It was
-compressed by [ISTA-DASLab](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF), UkisAI (Swift 1.5)
-and Unsloth. Strata uses parts of [llama.cpp / ggml](https://github.com/ggml-org/llama.cpp). All credits:
+compressed by [ISTA-DASLab](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF), UkisAI (Swift 1.5),
+Unsloth and agentionai (Signal). Strata uses parts of [llama.cpp / ggml](https://github.com/ggml-org/llama.cpp). All credits:
 [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#credits). Strata is open source under the [MIT License](LICENSE). A few
 parts and every model have their own licenses ([which ones](docs/HOW_IT_WORKS.md#license)).
 
