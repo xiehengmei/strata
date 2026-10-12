@@ -2944,6 +2944,10 @@ class Service:
         self.last_request_at = None                      # when a request last started or finished
         self.started_at = time.time()
         self.status_lock = threading.Lock()
+        self.video_preparing = 0
+        self.video_progress = {}
+        self.video_prep = None                          # preparation slots, sized from the engine on first use
+        self.video_prep_lock = threading.Lock()
         self.mcp = None                                  # serve/mcp.py's McpHub when MCP servers are configured
         # sharing the GPU with other programs (all off by default): unload the engine after this many idle seconds,
         # only start it again when this much VRAM is free, and run this command first (e.g. to unload another
@@ -3380,17 +3384,28 @@ class Service:
                 s = {**s, **dict(list(self.live_reqs.values())[-1][0]), "queued": s.get("queued", 0)}
             hist = list(self.history)
             totals = dict(self.totals)
+            video_preparing = self.video_preparing
+            progress_entries = list(self.video_progress.values())
+            video_progress = max(progress_entries, key=lambda p: p["updated_at"], default=None)
+            if video_progress is not None:
+                video_progress = {k: v for k, v in video_progress.items() if k != "updated_at"}
         now = time.time()
         progress = getattr(self.engine, "progress", None)
-        if s.get("busy") and s.get("first_token") is None:
+        if video_preparing:
+            state = "preparing_video"
+        elif s.get("busy") and s.get("first_token") is None:
             state = "reading"
         elif s.get("busy"):
             state = "generating"
+        elif s.get("queued"):
+            state = "queued"
         elif not self.loaded():
             state = "unloaded"
         else:
             state = "idle"
-        live = {"state": state, "queued": s.get("queued", 0), "phase": s.get("phase") if s.get("busy") else None,
+        live = {"state": state, "queued": s.get("queued", 0), "video_preparing": video_preparing,
+                "video_progress": video_progress,
+                "phase": s.get("phase") if s.get("busy") else None,
                 "prompt_tokens": s.get("prompt_tokens") if s.get("busy") else None,
                 "prompt_read": None, "prompt_total": None, "generated": s.get("generated") if s.get("busy") else None,
                 "max_tokens": s.get("max_tokens") if s.get("busy") else None,
@@ -3555,10 +3570,59 @@ class Service:
                     content[n] = {"type": "text", "text": f"[image omitted: {why}]"}
         return fetched
 
-    def prepare(self, messages, tools, kwargs, max_new=None, force=None, req=None):
+    def _prep_slots(self):
+        """How many video preparations may run at once: one, or the engine's batch slots."""
+        with self.video_prep_lock:
+            if self.video_prep is None:
+                self.video_prep = threading.Semaphore(max(1, int(getattr(self.engine, "batch", 0) or 0)))
+            return self.video_prep
+
+    def _set_video_progress(self, request_id, event):
+        entry = {**event, "updated_at": time.monotonic()}
+        with self.status_lock:
+            self.video_progress[request_id] = entry
+
+    def prepare(self, messages, tools, kwargs, max_new=None, force=None, req=None, cancel=None):
+        has_video = bool(videos_of(messages))
+        if not has_video:
+            return self._prepare_impl(messages, tools, kwargs, max_new, force, req, cancel, progress=None)
+        slots = self._prep_slots()
+        queued = True
+        acquired = False
+        with self.status_lock:
+            self.status["queued"] += 1
+        try:
+            while not acquired:
+                if cancel is not None and cancel.is_set():
+                    raise ValueError("video request cancelled")
+                acquired = slots.acquire(timeout=0.05)
+            with self.status_lock:
+                self.status["queued"] -= 1
+            queued = False
+            request_id = object()
+            with self.status_lock:
+                self.video_preparing += 1
+                self.video_progress[request_id] = {"stage": "staging", "done": 0, "total": None,
+                                                   "unit": "bytes", "updated_at": time.monotonic()}
+            try:
+                return self._prepare_impl(messages, tools, kwargs, max_new, force, req, cancel,
+                                          progress=lambda event: self._set_video_progress(request_id, event))
+            finally:
+                with self.status_lock:
+                    self.video_preparing -= 1
+                    self.video_progress.pop(request_id, None)
+        finally:
+            if queued:
+                with self.status_lock:
+                    self.status["queued"] -= 1
+            if acquired:
+                slots.release()
+
+    def _prepare_impl(self, messages, tools, kwargs, max_new=None, force=None, req=None, cancel=None, progress=None):
         """-> (ids, thinking, max_new). An unset or non-positive max_new (some clients send -1) means "unlimited":
         the rest of the context.  `force` (forced_call): without thinking the reply starts with it, so it ends the
         prompt; with thinking, Service.run writes it once the thinking is over."""
+        progress = progress or (lambda event: None)
         fetched = self._note_unreadable_tool_images(messages)
         ids = self.encode_prompt(messages, tools, kwargs)
         if force and kwargs.get("enable_thinking", True) is False:
@@ -3588,12 +3652,14 @@ class Service:
             # run on the GPU at the same time - an encode during a running request left that request stuck at
             # "reading the prompt" with CPU and GPU busy, for good (reproduced).  So encoding takes its turn in the
             # same FIFO as the requests.
+            progress({"stage": "waiting_for_encoder", "done": None, "total": None, "unit": None})
             with self.fifo:
                 encoded = (self.vision.encode_all(images) if hasattr(self.vision, "encode_all")
                            else [self.vision.encode(src) for src in images])
                 encoded_v = []                          # never evicting a file this request still needs (#1072)
                 for src, opts in videos:
                     held = [p for p, _ in encoded] + [v[0] for v in encoded_v]
+                    progress({"stage": "encoding", "done": 0, "total": None, "unit": "frames"})
                     encoded_v.append(self.vision.encode_video(src, opts, keep=held))
             # one <|image_pad|> per image -> one per image token.  Only the markers the template writes for an image
             # (right after <|vision_start|>) are images: the same text inside a message (an agent reading these docs,
@@ -3636,6 +3702,7 @@ class Service:
             if kv != len(encoded_v):
                 raise ValueError("the prompt and its videos do not match")
             ids = out
+            progress({"stage": "assembling_prompt", "done": None, "total": None, "unit": None})
         ctx = self.engine.max_context
         if ctx <= 0:
             if getattr(self.engine, "starting", False):   # #344: (re)starting, not a prompt that is too long
@@ -3669,6 +3736,7 @@ class Service:
             write_temporary(combined, records)
         if req is not None and req.get("strata_prefix") is not None:
             req["strata_prefix"] = self.resolve_prefix(req["strata_prefix"], messages, tools, kwargs, ids, bool(records))
+        progress({"stage": "handoff", "done": None, "total": None, "unit": None})
         return ids, kwargs.get("enable_thinking", True) is not False, max_new
 
     PREFIX_END = "\u0001strata-prefix-end\u0001"          # marks where a message's shared part ends in the rendered prompt
@@ -4424,7 +4492,7 @@ def run_with_mcp(svc: Service, hub, messages, tools, kw, ids, thinking, max_new,
                          **({"reasoning_content": "".join(reasoning).strip()} if reasoning else {}),
                          "tool_calls": [{"function": {"name": c.name, "arguments": c.arguments}} for c in calls]})
         messages += [{"role": "tool", "content": r} for r in results]
-        ids, thinking, max_new = svc.prepare(messages, tools, kw, max_req)
+        ids, thinking, max_new = svc.prepare(messages, tools, kw, max_req, cancel=cancel)
     yield "done", {**done, "completion_tokens": total, "prompt_tokens": len(ids)}
 
 
@@ -5065,7 +5133,14 @@ def make_handler(svc: Service):
                     return
                 with svc.status_lock:
                     s = dict(svc.status)
+                    s["video_preparing"] = svc.video_preparing
+                    entries = list(svc.video_progress.values())
+                    latest = max(entries, key=lambda p: p["updated_at"], default=None)
+                    if latest is not None:
+                        s["video_progress"] = {k: v for k, v in latest.items() if k != "updated_at"}
                 now = time.time()
+                if s.get("video_preparing"):
+                    s["phase"] = (s.get("video_progress") or {}).get("stage", "preparing video")
                 if s.get("busy"):
                     s["elapsed_s"] = round(now - s["started"], 1)
                     if s.get("first_token"):
@@ -5497,10 +5572,10 @@ def make_handler(svc: Service):
             svc.reasoning_budget(req)                         # a bad value is a 400 before anything is sent
             stop_strings(req)                                 # ... and so is a bad stop / stop_sequences
             check_request_sampling(req)                       # ... and a sampling field of the wrong type
-            ids, thinking, max_new = svc.prepare(messages, tools, kw, max_new, force=force, req=req)
-            _debug_req("openai", req, messages, tools, max_new, thinking, len(ids))
             cancel = threading.Event()
             self._watch_client(cancel)                       # #430 #431
+            ids, thinking, max_new = svc.prepare(messages, tools, kw, max_new, force=force, req=req, cancel=cancel)
+            _debug_req("openai", req, messages, tools, max_new, thinking, len(ids))
             run = run_with_mcp(svc, svc.mcp, messages, tools, kw, ids, thinking, max_new, max_req, req, cancel,
                                {t["name"] for t in extra}) if use_mcp else None
             chunks = openai_chunks(svc, req, ids, thinking, tools, max_new, cancel, run=run, force=force)
@@ -5558,16 +5633,16 @@ def make_handler(svc: Service):
                 return self._json(e.status, e.body())
             if title is not None:
                 return self._responses_ready(req, title)
+            cancel = threading.Event()
+            self._watch_client(cancel)                       # #430 #431
             try:
-                ids, thinking, tools, max_new, asm, validator, req = self._responses_prepare(req)
+                ids, thinking, tools, max_new, asm, validator, req = self._responses_prepare(req, cancel)
             except ResponsesError as e:
                 return self._json(e.status, e.body())
             except ModelBusy as e:
                 return self._json(409, responses_error_body(str(e), "server_error", code="model_busy"))
             except (GpuBusy, EngineStarting, EngineStuck, EngineDied) as e:
                 return self._json(503, responses_error_body(str(e), "server_error", code="server_error"))
-            cancel = threading.Event()
-            self._watch_client(cancel)                       # #430 #431
 
             def check(text, finish):
                 return validated_json(text, validator, finish)
@@ -5640,7 +5715,7 @@ def make_handler(svc: Service):
             except OSError:
                 pass
 
-        def _responses_prepare(self, req):
+        def _responses_prepare(self, req, cancel=None):
             responses_api.check_request(req)
             messages = responses_api.input_messages(req)
             tools, names, skipped = responses_api.request_tools(req)
@@ -5678,12 +5753,14 @@ def make_handler(svc: Service):
             shown = responses_api.prompt_tools(req, tools) if svc.codex_compaction_cache else tools
             try:
                 try:
-                    ids, thinking, max_new = svc.prepare(messages, shown, kw, req.get("max_output_tokens") or 0, req=req)
+                    ids, thinking, max_new = svc.prepare(messages, shown, kw, req.get("max_output_tokens") or 0,
+                                                          req=req, cancel=cancel)
                 except ValueError:
                     if shown is tools:
                         raise
                     shown = tools                            # too long with the kept tools: the request as sent
-                    ids, thinking, max_new = svc.prepare(messages, shown, kw, req.get("max_output_tokens") or 0, req=req)
+                    ids, thinking, max_new = svc.prepare(messages, shown, kw, req.get("max_output_tokens") or 0,
+                                                         req=req, cancel=cancel)
             except ResponsesError:
                 raise
             except ValueError as e:                          # too long for the context, an image without vision
@@ -5719,10 +5796,10 @@ def make_handler(svc: Service):
             svc.reasoning_budget(req)                         # a bad value is a 400 before anything is sent
             stop_strings(req)                                 # ... and so is a bad stop / stop_sequences
             check_request_sampling(req)                       # ... and a sampling field of the wrong type
-            ids, thinking, max_new = svc.prepare(messages, tools, kw, max_new, force=force, req=req)
-            _debug_req("anthropic", req, messages, tools, max_new, thinking, len(ids))
             cancel = threading.Event()
             self._watch_client(cancel)                       # #430 #431
+            ids, thinking, max_new = svc.prepare(messages, tools, kw, max_new, force=force, req=req, cancel=cancel)
+            _debug_req("anthropic", req, messages, tools, max_new, thinking, len(ids))
             events = anthropic_events(svc, req, ids, thinking, tools, max_new, cancel, force=force)
             events = self._capture(events, "anthropic")
             if not req.get("stream"):
